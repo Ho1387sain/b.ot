@@ -16,7 +16,8 @@ app = Flask(__name__)
 # ================== Flask Routes ==================
 @app.route("/")
 def home():
-    return "ربات شهریه‌یار فعال است ✅"
+    return "✅ ربات شهریه‌یار فعال است و آماده دریافت پرداخت‌هاست."
+
 
 @app.route("/callback")
 def callback():
@@ -38,7 +39,7 @@ def callback():
 
             df_payments = sheets.get("پرداخت‌ها", pd.DataFrame(columns=["تاریخ", "نام", "مبلغ (تومان)", "وضعیت"]))
 
-            # ثبت پرداخت جدید
+            # ثبت پرداخت
             shamsi_date = jdatetime.datetime.now().strftime("%Y/%m/%d %H:%M")
             new_row = {
                 "تاریخ": shamsi_date,
@@ -57,23 +58,46 @@ def callback():
             else:
                 new_tuition = "نامشخص"
 
-            # ذخیره همه شیت‌ها
+            # ذخیره در اکسل
             with pd.ExcelWriter(EXCEL_FILE, mode="w") as writer:
                 df_students.to_excel(writer, sheet_name="دانشجویان", index=False)
                 df_payments.to_excel(writer, sheet_name="پرداخت‌ها", index=False)
 
-            # پیام به کاربر
+            # پیام به ربات
             msg = f"✅ پرداخت {amount_toman} تومان ثبت شد.\nباقی‌مانده شهریه: {new_tuition} تومان"
             requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": msg})
 
-            return "پرداخت موفق بود ✅"
+            # HTML به کاربر
+            return f"""
+            <html>
+              <head><meta charset="utf-8"></head>
+              <body style="font-family:Tahoma; text-align:center; margin-top:50px;">
+                <h2 style="color:green;">✅ پرداخت با موفقیت انجام شد</h2>
+                <p>مبلغ: {amount_toman} تومان</p>
+                <p>شهریه باقی‌مانده: {new_tuition}</p>
+                <p>نتیجه پرداخت در ربات هم ارسال شد.</p>
+              </body>
+            </html>
+            """
         except Exception as e:
             print("خطا در callback:", e)
             return "Error", 500
+
     else:
+        # پیام به ربات
         msg = "❌ پرداخت لغو شد یا ناموفق بود."
         requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": msg})
-        return "پرداخت ناموفق ❌"
+
+        # HTML به کاربر
+        return """
+        <html>
+          <head><meta charset="utf-8"></head>
+          <body style="font-family:Tahoma; text-align:center; margin-top:50px;">
+            <h2 style="color:red;">❌ پرداخت لغو شد یا ناموفق بود</h2>
+            <p>لطفاً دوباره تلاش کنید.</p>
+          </body>
+        </html>
+        """
 
 
 # ================== Bot Logic ==================
@@ -214,6 +238,7 @@ def run_bot():
         except Exception as e:
             print("خطا در ربات:", e)
             sleep(5)
+
 
 # ================== Run ==================
 if __name__ == "__main__":
