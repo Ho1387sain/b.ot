@@ -138,6 +138,7 @@ def run_bot():
                     if last_update_id is None or update_id >= last_update_id:
                         last_update_id = update_id + 1
 
+                        # پیام متنی
                         if "message" in update:
                             chat_id = update["message"]["chat"]["id"]
                             text = update["message"].get("text", "").strip()
@@ -215,31 +216,6 @@ def run_bot():
                                     reply = "کد ملی شما یافت نشد!"
                                     requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": reply})
 
-                            # هندل کردن callback_query
-                            elif "callback_query" in update:
-                                cq = update["callback_query"]
-                                cq_data = cq["data"]
-                                cq_chat_id = cq["message"]["chat"]["id"]
-
-                                if cq_data == "show_payments":
-                                    national_id = user_states[cq_chat_id]["id"]
-                                    sheets = pd.read_excel(EXCEL_FILE, sheet_name=None)
-                                    df_payments = sheets.get("پرداخت‌ها", pd.DataFrame())
-                                    df_payments = df_payments[df_payments["کد ملی"].astype(str).str.strip() == national_id]
-                                    if df_payments.empty:
-                                        msg = "هیچ پرداختی برای شما ثبت نشده است."
-                                    else:
-                                        msg = "📜 ریز پرداخت‌های شما:\n"
-                                        for _, row in df_payments.iterrows():
-                                            msg += f"{row['تاریخ']} - {row['مبلغ (تومان)']} تومان ({row['وضعیت']})\n"
-                                    requests.post(f"{API_URL}/sendMessage", json={"chat_id": cq_chat_id, "text": msg})
-                                    user_states[cq_chat_id] = {}
-
-                                elif cq_data == "pay":
-                                    user_states[cq_chat_id]["step"] = "waiting_amount"
-                                    msg = "لطفاً مبلغ پرداختی خود را به ریال وارد کنید:"
-                                    requests.post(f"{API_URL}/sendMessage", json={"chat_id": cq_chat_id, "text": msg})
-
                             # دریافت مبلغ → ساخت لینک پرداخت
                             elif user_states.get(chat_id, {}).get("step") == "waiting_amount" and text.isdigit():
                                 amount_rial = int(text)
@@ -262,9 +238,30 @@ def run_bot():
                                 user_states[chat_id] = {}
                                 requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": msg})
 
-                            else:
-                                msg = "لطفاً کد ملی معتبر وارد کنید یا /start بزنید."
-                                requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": msg})
+                        # دکمه‌های اینلاین (callback_query)
+                        if "callback_query" in update:
+                            cq = update["callback_query"]
+                            cq_data = cq["data"]
+                            cq_chat_id = cq["message"]["chat"]["id"]
+
+                            if cq_data == "show_payments":
+                                national_id = user_states[cq_chat_id]["id"]
+                                sheets = pd.read_excel(EXCEL_FILE, sheet_name=None)
+                                df_payments = sheets.get("پرداخت‌ها", pd.DataFrame())
+                                df_payments = df_payments[df_payments["کد ملی"].astype(str).str.strip() == national_id]
+                                if df_payments.empty:
+                                    msg = "هیچ پرداختی برای شما ثبت نشده است."
+                                else:
+                                    msg = "📜 ریز پرداخت‌های شما:\n"
+                                    for _, row in df_payments.iterrows():
+                                        msg += f"{row['تاریخ']} - {row['مبلغ (تومان)']} تومان ({row['وضعیت']})\n"
+                                requests.post(f"{API_URL}/sendMessage", json={"chat_id": cq_chat_id, "text": msg})
+                                user_states[cq_chat_id] = {}
+
+                            elif cq_data == "pay":
+                                user_states[cq_chat_id]["step"] = "waiting_amount"
+                                msg = "لطفاً مبلغ پرداختی خود را به ریال وارد کنید:"
+                                requests.post(f"{API_URL}/sendMessage", json={"chat_id": cq_chat_id, "text": msg})
 
             sleep(2)
         except Exception as e:
