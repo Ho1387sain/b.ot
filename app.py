@@ -10,6 +10,7 @@ import json
 # ======== تنظیمات ========
 TOKEN = "127184142:t8EC5x45a2aXInYYgz4L2EeVny7PBb1uiqwgeIpc"
 API_URL = f"https://tapi.bale.ai/bot{TOKEN}"
+BASE_URL = "https://b-ot.onrender.com"   # ✅ آدرس دپلوی روی Render
 EXCEL_FILE = "data_fixed.xlsx"
 
 app = Flask(__name__)
@@ -26,7 +27,6 @@ def callback():
     amount_rial = int(request.args.get("amount", 0))
     national_id = request.args.get("id").strip()
     name = request.args.get("name")
-    authority = request.args.get("Authority")
     status = request.args.get("Status")
 
     amount_toman = amount_rial // 10  # ریال → تومان
@@ -39,6 +39,7 @@ def callback():
             df_students["کد ملی"] = df_students["کد ملی"].astype(str).str.strip()
 
             df_payments = sheets.get("پرداخت‌ها", pd.DataFrame(columns=["تاریخ", "نام", "مبلغ (تومان)", "وضعیت", "کد ملی"]))
+
             # ثبت پرداخت
             shamsi_date = jdatetime.datetime.now().strftime("%Y/%m/%d %H:%M")
             new_row = {
@@ -85,11 +86,9 @@ def callback():
             return "Error", 500
 
     else:
-        # پیام به ربات
         msg = "❌ پرداخت لغو شد یا ناموفق بود."
         requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": msg})
 
-        # HTML به کاربر
         return """
         <html>
           <head><meta charset="utf-8"></head>
@@ -162,33 +161,42 @@ def run_bot():
                                     name = row.iloc[0]["نام"]
                                     tuition = int(row.iloc[0]["شهریه"])
 
-                                    # همیشه user state رو ثبت کنیم تا دکمه ریزپرداخت همیشه دسترسی به id داشته باشه
                                     user_states[chat_id] = {"step": None, "id": national_id, "name": name}
 
-                                    # اگر شهریه صفره، پیام تسویه همراه با دکمه ریز پرداخت‌ها (بدون پرداخت)
                                     if tuition == 0:
                                         reply = f"کد ملی: {national_id}\nنام: {name}\n🎉 شهریه شما تسویه شده است!"
                                         buttons = [[{"text": "📜 ریز پرداخت‌ها", "callback_data": "show_payments"}]]
-                                        reply_markup = {"inline_keyboard": buttons}
-                                        requests.post(f"{API_URL}/sendMessage", json={
-                                            "chat_id": chat_id,
-                                            "text": reply,
-                                            "reply_markup": json.dumps(reply_markup, ensure_ascii=False)
-                                        })
                                     else:
                                         reply = f"کد ملی: {national_id}\nنام: {name}\nمبلغ شهریه: {tuition} تومان"
                                         user_states[chat_id]["step"] = "choose_action"
                                         buttons = [[{"text": "📜 ریز پرداخت‌ها", "callback_data": "show_payments"},
                                                     {"text": "💳 پرداخت", "callback_data": "pay"}]]
-                                        reply_markup = {"inline_keyboard": buttons}
-                                        requests.post(f"{API_URL}/sendMessage", json={
-                                            "chat_id": chat_id,
-                                            "text": reply,
-                                            "reply_markup": json.dumps(reply_markup, ensure_ascii=False)
-                                        })
+
+                                    reply_markup = {"inline_keyboard": buttons}
+                                    requests.post(f"{API_URL}/sendMessage", json={
+                                        "chat_id": chat_id,
+                                        "text": reply,
+                                        "reply_markup": json.dumps(reply_markup, ensure_ascii=False)
+                                    })
                                 else:
                                     reply = "کد ملی شما یافت نشد!"
                                     requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": reply})
+
+                            # ✅ دریافت مبلغ پرداختی
+                            elif user_states.get(chat_id, {}).get("step") == "waiting_amount" and text.isdigit():
+                                amount_rial = int(text)
+                                name = user_states[chat_id]["name"]
+                                national_id = user_states[chat_id]["id"]
+
+                                callback_url = f"{BASE_URL}/callback?chat_id={chat_id}&amount={amount_rial}&id={national_id}&name={name}"
+                                payment_url, authority = create_test_payment(amount_rial, f"پرداخت شهریه توسط {name}", callback_url)
+
+                                if payment_url:
+                                    msg = f"💳 لینک پرداخت شما:\n{payment_url}"
+                                else:
+                                    msg = "⚠️ خطا در ایجاد لینک پرداخت."
+                                requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": msg})
+                                user_states[chat_id]["step"] = None
 
                         # دکمه‌های اینلاین
                         if "callback_query" in update:
@@ -196,13 +204,11 @@ def run_bot():
                             cq_data = cq["data"]
                             cq_chat_id = cq["message"]["chat"]["id"]
 
-                            # پاسخ به callback_query (محافظت در برابر UI قفل‌شده)
                             try:
                                 requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cq["id"]})
                             except Exception as e:
                                 print("خطا در answerCallbackQuery:", e)
 
-                            # گرفتن id و name از user_states (fallback ممکن)
                             national_id = user_states.get(cq_chat_id, {}).get("id")
                             user_name = user_states.get(cq_chat_id, {}).get("name")
 
@@ -213,11 +219,9 @@ def run_bot():
                                     sheets = pd.read_excel(EXCEL_FILE, sheet_name=None)
                                     df_payments = sheets.get("پرداخت‌ها", pd.DataFrame())
 
-                                    # اگر ستون 'کد ملی' وجود داشته باشه و پر شده باشه از آن استفاده کن
                                     if "کد ملی" in df_payments.columns and df_payments["کد ملی"].notna().any():
                                         df_user_payments = df_payments[df_payments["کد ملی"].astype(str).str.strip() == str(national_id)]
                                     else:
-                                        # fallback به نام
                                         df_user_payments = df_payments[df_payments["نام"].astype(str).str.strip() == str(user_name)]
 
                                     if df_user_payments.empty:
@@ -240,12 +244,10 @@ def run_bot():
                                             msg += f"{i}️⃣ {row.get('تاریخ','نامشخص')} → {amount_str} تومان {status_icon} {status}\n"
 
                                 requests.post(f"{API_URL}/sendMessage", json={"chat_id": cq_chat_id, "text": msg})
-                                # فقط step ریست می‌شه، id و name حفظ می‌شن
                                 if cq_chat_id in user_states:
                                     user_states[cq_chat_id]["step"] = None
 
                             elif cq_data == "pay":
-                                # قبل از تنظیم waiting_amount چک کن شهریه هنوز بالاست
                                 if cq_chat_id not in user_states or "id" not in user_states[cq_chat_id]:
                                     msg = "⚠️ لطفاً دوباره کد ملی خود را وارد کنید."
                                 else:
