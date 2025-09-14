@@ -39,7 +39,6 @@ def callback():
             df_students["کد ملی"] = df_students["کد ملی"].astype(str).str.strip()
 
             df_payments = sheets.get("پرداخت‌ها", pd.DataFrame(columns=["تاریخ", "نام", "مبلغ (تومان)", "وضعیت", "کد ملی"]))
-
             # ثبت پرداخت
             shamsi_date = jdatetime.datetime.now().strftime("%Y/%m/%d %H:%M")
             new_row = {
@@ -163,17 +162,25 @@ def run_bot():
                                     name = row.iloc[0]["نام"]
                                     tuition = int(row.iloc[0]["شهریه"])
 
+                                    # همیشه user state رو ثبت کنیم تا دکمه ریزپرداخت همیشه دسترسی به id داشته باشه
+                                    user_states[chat_id] = {"step": None, "id": national_id, "name": name}
+
+                                    # اگر شهریه صفره، پیام تسویه همراه با دکمه ریز پرداخت‌ها (بدون پرداخت)
                                     if tuition == 0:
                                         reply = f"کد ملی: {national_id}\nنام: {name}\n🎉 شهریه شما تسویه شده است!"
-                                        requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": reply})
+                                        buttons = [[{"text": "📜 ریز پرداخت‌ها", "callback_data": "show_payments"}]]
+                                        reply_markup = {"inline_keyboard": buttons}
+                                        requests.post(f"{API_URL}/sendMessage", json={
+                                            "chat_id": chat_id,
+                                            "text": reply,
+                                            "reply_markup": json.dumps(reply_markup, ensure_ascii=False)
+                                        })
                                     else:
                                         reply = f"کد ملی: {national_id}\nنام: {name}\nمبلغ شهریه: {tuition} تومان"
-                                        user_states[chat_id] = {"step": "choose_action", "id": national_id, "name": name}
-
+                                        user_states[chat_id]["step"] = "choose_action"
                                         buttons = [[{"text": "📜 ریز پرداخت‌ها", "callback_data": "show_payments"},
                                                     {"text": "💳 پرداخت", "callback_data": "pay"}]]
                                         reply_markup = {"inline_keyboard": buttons}
-
                                         requests.post(f"{API_URL}/sendMessage", json={
                                             "chat_id": chat_id,
                                             "text": reply,
@@ -189,35 +196,73 @@ def run_bot():
                             cq_data = cq["data"]
                             cq_chat_id = cq["message"]["chat"]["id"]
 
-                            # پاسخ به callback_query
-                            requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cq["id"]})
+                            # پاسخ به callback_query (محافظت در برابر UI قفل‌شده)
+                            try:
+                                requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cq["id"]})
+                            except Exception as e:
+                                print("خطا در answerCallbackQuery:", e)
+
+                            # گرفتن id و name از user_states (fallback ممکن)
+                            national_id = user_states.get(cq_chat_id, {}).get("id")
+                            user_name = user_states.get(cq_chat_id, {}).get("name")
 
                             if cq_data == "show_payments":
-                                national_id = user_states.get(cq_chat_id, {}).get("id")
-                                if not national_id:
+                                if not national_id and not user_name:
                                     msg = "⚠️ لطفاً دوباره کد ملی خود را وارد کنید."
                                 else:
                                     sheets = pd.read_excel(EXCEL_FILE, sheet_name=None)
                                     df_payments = sheets.get("پرداخت‌ها", pd.DataFrame())
-                                    df_payments = df_payments[df_payments["کد ملی"].astype(str).str.strip() == national_id]
 
-                                    if df_payments.empty:
+                                    # اگر ستون 'کد ملی' وجود داشته باشه و پر شده باشه از آن استفاده کن
+                                    if "کد ملی" in df_payments.columns and df_payments["کد ملی"].notna().any():
+                                        df_user_payments = df_payments[df_payments["کد ملی"].astype(str).str.strip() == str(national_id)]
+                                    else:
+                                        # fallback به نام
+                                        df_user_payments = df_payments[df_payments["نام"].astype(str).str.strip() == str(user_name)]
+
+                                    if df_user_payments.empty:
                                         msg = "هیچ پرداختی برای شما ثبت نشده است."
                                     else:
                                         msg = "📜 ریز پرداخت‌های شما:\n\n"
-                                        for i, row in enumerate(df_payments.iterrows(), start=1):
-                                            status_icon = "✅" if row[1]["وضعیت"] == "موفق" else ("❌" if row[1]["وضعیت"] == "ناموفق" else "⏳")
-                                            msg += f"{i}️⃣ {row[1]['تاریخ']} → {int(row[1]['مبلغ (تومان)'])} تومان {status_icon} {row[1]['وضعیت']}\n"
+                                        for i, (_, row) in enumerate(df_user_payments.iterrows(), start=1):
+                                            status = str(row.get("وضعیت", "")).strip()
+                                            if status == "موفق":
+                                                status_icon = "✅"
+                                            elif status == "ناموفق":
+                                                status_icon = "❌"
+                                            else:
+                                                status_icon = "⏳"
+                                            amount = row.get("مبلغ (تومان)", "")
+                                            try:
+                                                amount_str = f"{int(amount)}"
+                                            except:
+                                                amount_str = str(amount) if pd.notna(amount) else "نامشخص"
+                                            msg += f"{i}️⃣ {row.get('تاریخ','نامشخص')} → {amount_str} تومان {status_icon} {status}\n"
 
                                 requests.post(f"{API_URL}/sendMessage", json={"chat_id": cq_chat_id, "text": msg})
-                                user_states[cq_chat_id]["step"] = None
+                                # فقط step ریست می‌شه، id و name حفظ می‌شن
+                                if cq_chat_id in user_states:
+                                    user_states[cq_chat_id]["step"] = None
 
                             elif cq_data == "pay":
+                                # قبل از تنظیم waiting_amount چک کن شهریه هنوز بالاست
                                 if cq_chat_id not in user_states or "id" not in user_states[cq_chat_id]:
                                     msg = "⚠️ لطفاً دوباره کد ملی خود را وارد کنید."
                                 else:
-                                    user_states[cq_chat_id]["step"] = "waiting_amount"
-                                    msg = "لطفاً مبلغ پرداختی خود را به ریال وارد کنید:"
+                                    uid = user_states[cq_chat_id]["id"]
+                                    sheets = pd.read_excel(EXCEL_FILE, sheet_name=None)
+                                    df_students = sheets["دانشجویان"]
+                                    df_students["کد ملی"] = df_students["کد ملی"].astype(str).str.strip()
+                                    row = df_students[df_students["کد ملی"] == uid]
+                                    if row.empty:
+                                        msg = "⚠️ دانشجو یافت نشد. لطفاً دوباره کد ملی را ارسال کنید."
+                                    else:
+                                        tuition = int(row.iloc[0]["شهریه"])
+                                        if tuition <= 0:
+                                            msg = "💡 شهریه شما قبلاً تسویه شده است؛ نیازی به پرداخت نیست."
+                                        else:
+                                            user_states[cq_chat_id]["step"] = "waiting_amount"
+                                            msg = "لطفاً مبلغ پرداختی خود را به ریال وارد کنید:"
                                 requests.post(f"{API_URL}/sendMessage", json={"chat_id": cq_chat_id, "text": msg})
 
             sleep(2)
