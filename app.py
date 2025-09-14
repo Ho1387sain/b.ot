@@ -12,6 +12,7 @@ TOKEN = "127184142:t8EC5x45a2aXInYYgz4L2EeVny7PBb1uiqwgeIpc"
 API_URL = f"https://tapi.bale.ai/bot{TOKEN}"
 BASE_URL = "https://b-ot.onrender.com"   # ✅ آدرس دپلوی روی Render
 EXCEL_FILE = "data_fixed.xlsx"
+ADMIN_NATIONAL_ID = "3861804190"          # ✅ کد ملی مدیر
 
 app = Flask(__name__)
 
@@ -153,6 +154,51 @@ def run_bot():
                             elif user_states.get(chat_id, {}).get("step") == "waiting_national_id" and text.isdigit():
                                 national_id = text.strip()
                                 sheets = pd.read_excel(EXCEL_FILE, sheet_name=None)
+
+                                # ✅ حالت مدیر
+                                if national_id == ADMIN_NATIONAL_ID:
+                                    df_students = sheets["دانشجویان"]
+                                    df_payments = sheets.get("پرداخت‌ها", pd.DataFrame())
+
+                                    now = jdatetime.datetime.now()
+                                    this_month = now.strftime("%Y/%m")
+
+                                    df_month = df_payments[df_payments["تاریخ"].astype(str).str.startswith(this_month)]
+
+                                    total_paid = df_month[df_month["وضعیت"] == "موفق"]["مبلغ (تومان)"].sum()
+                                    count_paid = len(df_month[df_month["وضعیت"] == "موفق"])
+                                    total_tuition_remain = df_students["شهریه"].sum()
+
+                                    msg = (
+                                        f"📊 گزارش ماه {this_month}\n"
+                                        f"🔹 مجموع پرداخت‌های موفق: {total_paid} تومان\n"
+                                        f"🔹 تعداد پرداخت‌های موفق: {count_paid}\n"
+                                        f"🔹 مانده‌ی کل شهریه: {total_tuition_remain} تومان\n\n"
+                                        "📜 ریز پرداخت‌های این ماه:\n"
+                                    )
+
+                                    for i, row in df_month.iterrows():
+                                        msg += f"- {row['نام']} | {row['تاریخ']} | {row['مبلغ (تومان)']} تومان | {row['وضعیت']}\n"
+
+                                    # ارسال گزارش متنی
+                                    requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": msg})
+
+                                    # ساخت و ارسال فایل اکسل
+                                    report_file = "گزارش-ماه.xlsx"
+                                    with pd.ExcelWriter(report_file, engine="openpyxl") as writer:
+                                        df_month.to_excel(writer, sheet_name="ریز پرداخت‌ها", index=False)
+                                        df_students.to_excel(writer, sheet_name="شهریه فعلی", index=False)
+
+                                    files = {"document": open(report_file, "rb")}
+                                    requests.post(
+                                        f"{API_URL}/sendDocument",
+                                        data={"chat_id": chat_id},
+                                        files=files
+                                    )
+
+                                    continue  # ✅ حالت مدیر تموم شد
+
+                                # ✅ حالت دانشجو
                                 df_students = sheets["دانشجویان"]
                                 df_students["کد ملی"] = df_students["کد ملی"].astype(str).str.strip()
 
