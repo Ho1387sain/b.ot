@@ -196,7 +196,9 @@ def run_bot():
                                         files=files
                                     )
 
-                                    continue  # ✅ حالت مدیر تموم شد
+                                    # ✅ مدیر تموم شد → برگردیم
+                                    user_states[chat_id] = {"step": None, "id": national_id, "name": "مدیر"}
+                                    continue
 
                                 # ✅ حالت دانشجو
                                 df_students = sheets["دانشجویان"]
@@ -244,7 +246,7 @@ def run_bot():
                                 requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": msg})
                                 user_states[chat_id]["step"] = None
 
-                        # دکمه‌های اینلاین
+                        # دکمه‌های اینلاین (بدون تغییر)
                         if "callback_query" in update:
                             cq = update["callback_query"]
                             cq_data = cq["data"]
