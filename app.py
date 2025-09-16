@@ -366,7 +366,7 @@ def send_daily_reminders():
 
 
 def run_scheduler():
-    schedule.every().day.at("15:00").do(send_daily_reminders)
+    schedule.every().day.at("15:20").do(send_daily_reminders)
     while True:
         schedule.run_pending()
         sleep(30)
