@@ -6,6 +6,7 @@ from time import sleep
 from flask import Flask, request
 import os
 import json
+import schedule
 
 # ======== تنظیمات ========
 TOKEN = "127184142:t8EC5x45a2aXInYYgz4L2EeVny7PBb1uiqwgeIpc"
@@ -120,9 +121,10 @@ def create_test_payment(amount, description, callback_url):
     return None, None
 
 
+user_states = {}
+
 def run_bot():
     last_update_id = None
-    user_states = {}
 
     print("🤖 ربات فعال شد و در حال گوش دادن است...")
 
@@ -321,8 +323,58 @@ def run_bot():
             sleep(5)
 
 
+# ================== Daily Reminder ==================
+def send_daily_reminders():
+    try:
+        sheets = pd.read_excel(EXCEL_FILE, sheet_name=None)
+        df_students = sheets["دانشجویان"]
+        df_students["کد ملی"] = df_students["کد ملی"].astype(str).str.strip()
+
+        for chat_id, state in user_states.items():
+            national_id = state.get("id")
+            name = state.get("name")
+
+            if not national_id or not name:
+                continue
+
+            row = df_students[df_students["کد ملی"] == national_id]
+            if row.empty:
+                continue
+
+            tuition = int(row.iloc[0]["شهریه"])
+            if tuition <= 0:
+                continue
+
+            suggestion = tuition * 20 // 100
+
+            msg = (
+                f"📢 یادآوری روزانه\n"
+                f"نام: {name}\n"
+                f"شهریه باقی‌مانده: {tuition} تومان\n"
+                f"پیشنهاد پرداخت (۲۰٪): {suggestion} تومان"
+            )
+            buttons = [[{"text": "💳 پرداخت", "callback_data": "pay"}]]
+            reply_markup = {"inline_keyboard": buttons}
+
+            requests.post(f"{API_URL}/sendMessage", json={
+                "chat_id": chat_id,
+                "text": msg,
+                "reply_markup": json.dumps(reply_markup, ensure_ascii=False)
+            })
+    except Exception as e:
+        print("خطا در ارسال یادآوری:", e)
+
+
+def run_scheduler():
+    schedule.every().day.at("15:00").do(send_daily_reminders)
+    while True:
+        schedule.run_pending()
+        sleep(30)
+
+
 # ================== Run ==================
 if __name__ == "__main__":
     threading.Thread(target=run_bot, daemon=True).start()
+    threading.Thread(target=run_scheduler, daemon=True).start()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
